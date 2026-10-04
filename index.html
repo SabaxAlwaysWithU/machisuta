@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>まちスタ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2933; --sub: #6b7785; --line: #e2e6ea;
+    --accent: #f76707; --reach: #fab005; --gray: #868e96; --me: #1c7ed6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1f24; --fg: #e8ecef; --sub: #98a3ae; --line: #323a42; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: var(--fg); background: var(--bg); overflow: hidden; }
+  #map { position: absolute; inset: 0; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 12px; min-height: 40px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.small { padding: 4px 10px; min-height: 32px; font-size: 13px; }
+
+  #top { position: absolute; z-index: 1000; top: calc(env(safe-area-inset-top) + 8px); left: 8px; right: 8px; display: flex; gap: 8px; align-items: center; pointer-events: none; }
+  #top > * { pointer-events: auto; }
+  #progress { flex: 1; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; box-shadow: 0 1px 4px rgba(0,0,0,.2); min-width: 0; }
+  #progress b { font-size: 18px; }
+  #progress small { color: var(--sub); display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  #menuBtn { box-shadow: 0 1px 4px rgba(0,0,0,.2); height: 52px; }
+
+  #recenter { position: absolute; z-index: 1000; right: 8px; bottom: calc(var(--card-h, 120px) + 36px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 50%; padding: 0; font-size: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+
+  #card { position: absolute; z-index: 1000; left: 8px; right: 8px; bottom: calc(26px + env(safe-area-inset-bottom)); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.25); max-height: 38vh; overflow-y: auto; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .info { flex: 1; min-width: 0; }
+  .row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { color: var(--sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .done { color: var(--accent); font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .hint { color: var(--sub); font-size: 13px; }
+
+  #credit { position: absolute; z-index: 1000; left: 0; right: 0; bottom: 0; padding: 4px 8px calc(4px + env(safe-area-inset-bottom)); font-size: 11px; color: var(--sub); background: color-mix(in srgb, var(--bg) 85%, transparent); text-align: center; }
+  #credit a { color: inherit; }
+  .leaflet-control-attribution { display: none; }
+
+  #sheet { position: absolute; z-index: 2000; inset: 0; background: var(--bg); overflow-y: auto; padding: calc(env(safe-area-inset-top) + 12px) 16px 32px; display: none; }
+  #sheet.open { display: block; }
+  #sheet h2 { font-size: 16px; margin: 20px 0 8px; }
+  #sheet header { display: flex; justify-content: space-between; align-items: center; }
+  #sheet header h1 { font-size: 18px; margin: 0; }
+  .day { font-size: 12px; color: var(--sub); margin: 12px 0 2px; }
+  .attr { font-size: 11px; color: var(--sub); line-height: 1.5; margin: 4px 0; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  select { font: inherit; padding: 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+
+  #toast { position: absolute; z-index: 3000; left: 50%; top: calc(env(safe-area-inset-top) + 76px); transform: translateX(-50%); background: #1f2933; color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 90vw; text-align: center; }
+  #toast.show { opacity: 1; }
+  .popup .name { font-weight: 600; margin-bottom: 2px; }
+  .popup .meta { color: #6b7785; font-size: 12px; margin-bottom: 8px; }
+  .popup .actions { gap: 6px; }
+  .popup button { color: #1f2933; background: #fff; border: 1px solid #ccd; }
+  .popup button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="top">
+  <div id="progress">
+    <b id="pText">-/-軒</b> <span id="pLabel" style="font-size:12px;color:var(--sub)">取得範囲内</span>
+    <div id="bar"><i></i></div>
+    <small id="status">位置情報を取得中…</small>
+  </div>
+  <button id="menuBtn" class="btn" aria-label="記録と設定">記録</button>
+</div>
+
+<button id="recenter" class="btn" aria-label="現在地に戻る">◎</button>
+<div id="card"></div>
+<div id="credit">出典: <a href="https://openpoiapi.com/attribution.html" target="_blank" rel="noopener">OpenPOI API</a> / 地図: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>
+<div id="sheet"></div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+(() => {
+'use strict';
+
+// ---------- 定数 ----------
+const API = 'https://api.openpoiapi.com/v1/search';
+const FETCH_RADIUS = 500;      // m
+const FETCH_LIMIT = 200;
+const REFETCH_DIST = 150;      // m 前回取得地点からこれ以上動いたら再取得
+const STORE_KEY = 'machisuta.v1';
+const DEFAULT_POS = { lat: 35.681236, lng: 139.767052 }; // 東京駅(位置不明時の仮位置)
+const REACH_OPTIONS = [30, 50, 100];
+
+// ---------- 保存 ----------
+function emptyDb() { return { stamps: {}, closed: {}, settings: { reach: 50 } }; }
+function loadDb() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (d && typeof d === 'object') {
+      return { stamps: d.stamps || {}, closed: d.closed || {}, settings: { reach: 50, ...(d.settings || {}) } };
+    }
+  } catch (e) { /* 壊れていたら空から始める */ }
+  return emptyDb();
+}
+let db = loadDb();
+function saveDb() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
+  catch (e) { toast('保存に失敗しました(容量またはプライベートモード)'); }
+}
+
+// ---------- ユーティリティ ----------
+const $ = (id) => document.getElementById(id);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+}
+function distM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+const keyOf = (name, lat, lng) => `${name}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
+const fmtDist = (m) => (m == null ? '距離不明' : m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`);
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+let toastTimer;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// ---------- 状態 ----------
+const params = new URLSearchParams(location.search);
+const debugPos = (params.has('lat') && params.has('lng')) ? { lat: +params.get('lat'), lng: +params.get('lng') } : null;
+
+let pos = null;            // { lat, lng, acc }
+let follow = true;
+let pois = new Map();      // key -> poi (取得範囲内)
+let lastFetch = null;      // { lat, lng }
+let fetching = false;
+
+// ---------- 地図 ----------
+const map = L.map('map', { zoomControl: false }).setView([DEFAULT_POS.lat, DEFAULT_POS.lng], 17);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+const poiLayer = L.layerGroup().addTo(map);
+const meMarker = L.circleMarker([0, 0], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1 });
+const accCircle = L.circle([0, 0], { radius: 1, color: '#1c7ed6', weight: 1, fillOpacity: 0.1, interactive: false });
+map.on('dragstart', () => { follow = false; });
+$('recenter').addEventListener('click', () => {
+  follow = true;
+  if (pos) map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 17));
+  else toast('現在地がまだ取得できていません');
+});
+if (debugPos) {
+  map.on('click', (e) => setPos({ lat: e.latlng.lat, lng: e.latlng.lng, acc: 5 }));
+}
+
+// ---------- 施設取得 ----------
+async function fetchPois(center) {
+  if (fetching) return;
+  fetching = true;
+  try {
+    const url = `${API}?center=${center.lng},${center.lat}&radius=${FETCH_RADIUS}&limit=${FETCH_LIMIT}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const next = new Map();
+    for (const r of data.results || []) {
+      const lat = typeof r.lat === 'number' ? r.lat : parseFloat(r.lat);
+      const lng = typeof r.lng === 'number' ? r.lng : parseFloat(r.lng);
+      if (!r.name || !Number.isFinite(lat) || !Number.isFinite(lng)) continue; // 座標なしは除外
+      const key = keyOf(r.name, lat, lng);
+      if (next.has(key)) continue;
+      next.set(key, {
+        key, name: r.name, address: r.address || '', prefecture: r.prefecture || '', city: r.city || '',
+        lat, lng, licenses: r.licenses || [], attributions: r.attributions || [],
+      });
+    }
+    pois = next;
+    lastFetch = { lat: center.lat, lng: center.lng };
+    rebuildMarkers();
+    refresh();
+    if (data.count >= FETCH_LIMIT) toast('件数が多いため、近い順に200件を表示しています');
+  } catch (e) {
+    toast('施設の取得に失敗しました。通信状況を確認してください');
+    $('status').textContent = '施設を取得できませんでした';
+  } finally {
+    fetching = false;
+  }
+}
+
+// ---------- マーカー ----------
+function styleFor(p) {
+  if (db.stamps[p.key]) return { radius: 9, color: '#fff', weight: 2, fillColor: '#f76707', fillOpacity: 1 };
+  if (p.reach) return { radius: 14, color: '#5c3d00', weight: 3, fillColor: '#fab005', fillOpacity: 1 };
+  return { radius: 7, color: '#fff', weight: 1.5, fillColor: '#868e96', fillOpacity: 0.9 };
+}
+function rebuildMarkers() {
+  poiLayer.clearLayers();
+  for (const p of pois.values()) {
+    if (db.closed[p.key]) { p.marker = null; continue; }
+    p.marker = L.circleMarker([p.lat, p.lng], styleFor(p)).addTo(poiLayer);
+    p.marker.bindPopup(() => popupFor(p), { minWidth: 200 });
+  }
+}
+function popupFor(p) {
+  const stamped = db.stamps[p.key];
+  const d = pos ? distM(pos, p) : null;
+  const box = h('div', { class: 'popup' },
+    h('div', { class: 'name' }, p.name),
+    h('div', { class: 'meta' }, [p.address || [p.prefecture, p.city].filter(Boolean).join(' ') || '住所なし', ` ・ ${fmtDist(d)}`].join('')),
+    h('div', { class: 'actions' },
+      stamped
+        ? h('button', { class: 'btn small', onclick: () => { unstamp(p); map.closePopup(); } }, 'スタンプを取り消す')
+        : h('button', { class: 'btn small primary', onclick: () => { stamp(p, !p.reach); map.closePopup(); } },
+            p.reach ? 'スタンプ' : '手動でスタンプ'),
+      h('button', { class: 'btn small', onclick: () => { markClosed(p); map.closePopup(); } }, '閉業'))
+  );
+  return box;
+}
+
+// ---------- スタンプ・閉業 ----------
+function stamp(p, manual) {
+  if (db.stamps[p.key]) return;
+  db.stamps[p.key] = {
+    key: p.key, name: p.name, address: p.address, prefecture: p.prefecture, city: p.city,
+    lat: p.lat, lng: p.lng, stampedAt: new Date().toISOString(), manual: !!manual,
+    licenses: p.licenses, attributions: p.attributions,
+  };
+  saveDb(); refresh();
+  toast(`「${p.name}」にスタンプを押しました`);
+}
+function unstamp(p) { delete db.stamps[p.key]; saveDb(); refresh(); }
+function markClosed(p) {
+  if (!confirm(`「${p.name}」を閉業として扱いますか?\n(達成率の分母から外れます。記録画面から戻せます)`)) return;
+  db.closed[p.key] = { key: p.key, name: p.name, address: p.address, lat: p.lat, lng: p.lng, closedAt: new Date().toISOString() };
+  saveDb(); rebuildMarkers(); refresh();
+}
+function reopen(key) { delete db.closed[key]; saveDb(); rebuildMarkers(); refresh(); if (sheetOpen()) renderSheet(); }
+
+// ---------- 画面更新 ----------
+function refresh() {
+  const reach = db.settings.reach;
+  const active = [];
+  for (const p of pois.values()) {
+    if (db.closed[p.key]) continue;
+    p.dist = pos ? distM(pos, p) : null;
+    p.reach = p.dist != null && p.dist <= reach;
+    active.push(p);
+    if (p.marker) { p.marker.setStyle(styleFor(p)); if (p.reach && !db.stamps[p.key]) p.marker.bringToFront(); }
+  }
+  // 進捗
+  const done = active.filter((p) => db.stamps[p.key]).length;
+  $('pText').textContent = `${done}/${active.length}軒`;
+  $('bar').firstElementChild.style.width = active.length ? `${(done / active.length) * 100}%` : '0';
+
+  // 近くの店カード
+  const card = $('card'); card.replaceChildren();
+  const near = active.filter((p) => p.reach).sort((a, b) => a.dist - b.dist);
+  if (near.length) {
+    for (const p of near) {
+      const stamped = !!db.stamps[p.key];
+      card.append(h('div', { class: 'row' },
+        h('div', { class: 'info' },
+          h('div', { class: 'name' }, p.name),
+          h('div', { class: 'meta' }, `${fmtDist(p.dist)} ・ ${p.address || [p.prefecture, p.city].filter(Boolean).join(' ') || '住所なし'}`)),
+        stamped
+          ? h('span', { class: 'done' }, '済 ✓')
+          : h('button', { class: 'btn primary', onclick: () => stamp(p, false) }, 'スタンプ')));
+    }
+  } else {
+    const nearest = active.filter((p) => p.dist != null && !db.stamps[p.key]).sort((a, b) => a.dist - b.dist)[0];
+    card.append(h('div', { class: 'hint' },
+      !pois.size ? '周辺の施設を読み込み中…'
+        : nearest ? `${reach}m以内にスタンプできるお店はありません。最寄り: ${nearest.name}(${fmtDist(nearest.dist)})`
+        : pos ? '近くの未訪問のお店はありません' : '現在地不明のため、ピンをタップして手動でスタンプできます'));
+  }
+  document.documentElement.style.setProperty('--card-h', `${card.offsetHeight}px`);
+  if (sheetOpen()) renderSheet();
+}
+
+// ---------- 現在地 ----------
+function setPos(p) {
+  pos = p;
+  meMarker.setLatLng([p.lat, p.lng]); accCircle.setLatLng([p.lat, p.lng]).setRadius(Math.max(p.acc || 1, 1));
+  if (!map.hasLayer(meMarker)) { accCircle.addTo(map); meMarker.addTo(map); }
+  $('status').textContent = `現在地 精度±${Math.round(p.acc || 0)}m${debugPos ? '(デバッグ)' : ''}`;
+  if (follow) map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17), { animate: true });
+  if (!lastFetch || distM(lastFetch, p) >= REFETCH_DIST) fetchPois(p);
+  refresh();
+}
+function startLocation() {
+  if (debugPos) { setPos({ ...debugPos, acc: 5 }); return; }
+  if (!navigator.geolocation) return fallbackPos('この端末は位置情報に対応していません');
+  navigator.geolocation.watchPosition(
+    (g) => setPos({ lat: g.coords.latitude, lng: g.coords.longitude, acc: g.coords.accuracy }),
+    (err) => fallbackPos(err.code === 1 ? '位置情報が許可されていません' : '現在地を取得できません'),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
+  );
+}
+function fallbackPos(msg) {
+  $('status').textContent = `${msg}(東京駅周辺を表示)`;
+  if (!lastFetch) { follow = false; map.setView([DEFAULT_POS.lat, DEFAULT_POS.lng], 17); fetchPois(DEFAULT_POS); }
+}
+
+// ---------- 記録・設定シート ----------
+const sheetOpen = () => $('sheet').classList.contains('open');
+$('menuBtn').addEventListener('click', () => { renderSheet(); $('sheet').classList.add('open'); });
+
+function renderSheet() {
+  const sheet = $('sheet'); const top = sheet.scrollTop; sheet.replaceChildren();
+  const stamps = Object.values(db.stamps).sort((a, b) => b.stampedAt.localeCompare(a.stampedAt));
+  const closed = Object.values(db.closed);
+
+  sheet.append(h('header', {}, h('h1', {}, `記録(${stamps.length}軒)`),
+    h('button', { class: 'btn', onclick: () => sheet.classList.remove('open') }, '閉じる')));
+
+  // 一覧(日付ごと)
+  if (!stamps.length) sheet.append(h('p', { class: 'hint' }, 'まだスタンプがありません。歩いて集めましょう。'));
+  let lastDay = '';
+  for (const s of stamps) {
+    const day = fmtDate(s.stampedAt);
+    if (day !== lastDay) { sheet.append(h('div', { class: 'day' }, day)); lastDay = day; }
+    sheet.append(h('div', { class: 'row' },
+      h('div', { class: 'info' },
+        h('div', { class: 'name' }, s.name),
+        h('div', { class: 'meta' }, `${fmtTime(s.stampedAt)}${s.manual ? ' ・手動' : ''} ・ ${s.address || [s.prefecture, s.city].filter(Boolean).join(' ') || '住所なし'}`)),
+      h('button', { class: 'btn small', onclick: () => { map.closePopup(); sheet.classList.remove('open'); follow = false; map.setView([s.lat, s.lng], 18); } }, '地図')));
+  }
+
+  // 設定
+  sheet.append(h('h2', {}, '設定'));
+  const sel = h('select', { onchange: (e) => { db.settings.reach = +e.target.value; saveDb(); refresh(); } },
+    REACH_OPTIONS.map((m) => h('option', { value: m, selected: m === db.settings.reach }, `${m}m`)));
+  sheet.append(h('label', {}, 'スタンプできる距離 ', sel),
+    h('p', { class: 'hint' }, 'GPSがずれやすい屋内やビル街では広げると押しやすくなります。'));
+
+  // 閉業
+  if (closed.length) {
+    sheet.append(h('h2', {}, `閉業(${closed.length}軒)`));
+    for (const c of closed) {
+      sheet.append(h('div', { class: 'row' },
+        h('div', { class: 'info' }, h('div', { class: 'name' }, c.name), h('div', { class: 'meta' }, c.address || '住所なし')),
+        h('button', { class: 'btn small', onclick: () => reopen(c.key) }, '戻す')));
+    }
+  }
+
+  // データ
+  sheet.append(h('h2', {}, 'データ'));
+  const file = h('input', { type: 'file', accept: 'application/json', style: 'display:none', onchange: importJson });
+  sheet.append(h('div', { class: 'actions' },
+    h('button', { class: 'btn', onclick: exportJson }, 'JSONで書き出す'),
+    h('button', { class: 'btn', onclick: () => file.click() }, 'JSONから復元'), file),
+    h('p', { class: 'hint' }, '記録はこの端末のブラウザにだけ保存されています。機種変更の前に書き出してください。'));
+
+  // 出典
+  const attrs = new Set();
+  for (const s of stamps) for (const a of s.attributions || []) attrs.add(a);
+  const lic = new Set();
+  for (const s of stamps) for (const l of s.licenses || []) lic.add(l);
+  sheet.append(h('h2', {}, '出典・ライセンス'),
+    h('p', { class: 'attr' }, 'データ: ', h('a', { href: 'https://openpoiapi.com/attribution.html', target: '_blank', rel: 'noopener' }, 'OpenPOI API'),
+      ' / 地図: © OpenStreetMap contributors'));
+  if (lic.size) sheet.append(h('p', { class: 'attr' }, `ライセンス: ${[...lic].join(' / ')}`));
+  for (const a of attrs) sheet.append(h('p', { class: 'attr' }, a));
+  sheet.scrollTop = top;
+}
+
+function exportJson() {
+  const blob = new Blob([JSON.stringify({ app: 'machisuta', version: 1, exportedAt: new Date().toISOString(), ...db }, null, 2)], { type: 'application/json' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: `machisuta-${new Date().toISOString().slice(0, 10)}.json` });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importJson(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const d = JSON.parse(reader.result);
+      if (d.app !== 'machisuta' || typeof d.stamps !== 'object') throw new Error('形式が違います');
+      const n = Object.keys(d.stamps).length;
+      if (!confirm(`${n}件の記録を取り込みます。同じお店は新しい方の日時で上書きされず、既存を残します。続けますか?`)) return;
+      for (const [k, v] of Object.entries(d.stamps)) if (!db.stamps[k]) db.stamps[k] = v;
+      for (const [k, v] of Object.entries(d.closed || {})) if (!db.closed[k]) db.closed[k] = v;
+      saveDb(); rebuildMarkers(); refresh(); toast('復元しました');
+    } catch (err) { toast(`復元できませんでした: ${err.message}`); }
+  };
+  reader.readAsText(f);
+}
+
+// ---------- 起動 ----------
+refresh();
+startLocation();
+})();
+</script>
+</body>
+</html>
