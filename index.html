@@ -97,14 +97,16 @@ const REFETCH_DIST = 150;      // m 前回取得地点からこれ以上動い�
 const STORE_KEY = 'machisuta.v1';
 const DEFAULT_POS = { lat: 35.681236, lng: 139.767052 }; // 東京駅(位置不明時の仮位置)
 const REACH_OPTIONS = [30, 50, 100];
+const FOOD_CATEGORIES = new Set(['restaurant', 'cafe', 'bar_izakaya', 'bakery']);
+const FOOD_LIKE = /restaurant|cafe|izakaya|bakery|sweets|ramen|food|diner|bistro|pub/;
 
 // ---------- 保存 ----------
-function emptyDb() { return { stamps: {}, closed: {}, settings: { reach: 50 } }; }
+function emptyDb() { return { stamps: {}, closed: {}, settings: { reach: 50, foodOnly: true } }; }
 function loadDb() {
   try {
     const d = JSON.parse(localStorage.getItem(STORE_KEY));
     if (d && typeof d === 'object') {
-      return { stamps: d.stamps || {}, closed: d.closed || {}, settings: { reach: 50, ...(d.settings || {}) } };
+      return { stamps: d.stamps || {}, closed: d.closed || {}, settings: { reach: 50, foodOnly: true, ...(d.settings || {}) } };
     }
   } catch (e) { /* 壊れていたら空から始める */ }
   return emptyDb();
@@ -134,6 +136,8 @@ function distM(a, b) {
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 }
+const isFood = (p) => FOOD_CATEGORIES.has(p.category) || FOOD_LIKE.test(p.category || '');
+const isShown = (p) => !db.closed[p.key] && (!db.settings.foodOnly || isFood(p));
 const keyOf = (name, lat, lng) => `${name}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
 const fmtDist = (m) => (m == null ? '距離不明' : m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`);
 const fmtDate = (iso) => new Date(iso).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -188,7 +192,7 @@ async function fetchPois(center) {
       if (next.has(key)) continue;
       next.set(key, {
         key, name: r.name, address: r.address || '', prefecture: r.prefecture || '', city: r.city || '',
-        lat, lng, licenses: r.licenses || [], attributions: r.attributions || [],
+        lat, lng, category: r.category || 'unknown', licenses: r.licenses || [], attributions: r.attributions || [],
       });
     }
     pois = next;
@@ -213,7 +217,7 @@ function styleFor(p) {
 function rebuildMarkers() {
   poiLayer.clearLayers();
   for (const p of pois.values()) {
-    if (db.closed[p.key]) { p.marker = null; continue; }
+    if (!isShown(p)) { p.marker = null; continue; }
     p.marker = L.circleMarker([p.lat, p.lng], styleFor(p)).addTo(poiLayer);
     p.marker.bindPopup(() => popupFor(p), { minWidth: 200 });
   }
@@ -239,7 +243,7 @@ function stamp(p, manual) {
   if (db.stamps[p.key]) return;
   db.stamps[p.key] = {
     key: p.key, name: p.name, address: p.address, prefecture: p.prefecture, city: p.city,
-    lat: p.lat, lng: p.lng, stampedAt: new Date().toISOString(), manual: !!manual,
+    lat: p.lat, lng: p.lng, category: p.category, stampedAt: new Date().toISOString(), manual: !!manual,
     licenses: p.licenses, attributions: p.attributions,
   };
   saveDb(); refresh();
@@ -258,7 +262,7 @@ function refresh() {
   const reach = db.settings.reach;
   const active = [];
   for (const p of pois.values()) {
-    if (db.closed[p.key]) continue;
+    if (!isShown(p)) continue;
     p.dist = pos ? distM(pos, p) : null;
     p.reach = p.dist != null && p.dist <= reach;
     active.push(p);
@@ -349,6 +353,11 @@ function renderSheet() {
     REACH_OPTIONS.map((m) => h('option', { value: m, selected: m === db.settings.reach }, `${m}m`)));
   sheet.append(h('label', {}, 'スタンプできる距離 ', sel),
     h('p', { class: 'hint' }, 'GPSがずれやすい屋内やビル街では広げると押しやすくなります。'));
+
+  sheet.append(h('label', { style: 'display:block;margin-top:12px' },
+    h('input', { type: 'checkbox', checked: db.settings.foodOnly, onchange: (e) => { db.settings.foodOnly = e.target.checked; saveDb(); rebuildMarkers(); refresh(); } }),
+    ' 飲食店だけ表示する(カフェ・居酒屋・パン屋を含む)'),
+    h('p', { class: 'hint' }, 'カテゴリが不明(unknown)の施設は、飲食店かどうか判別できないため、この設定では表示されません。'));
 
   // 閉業
   if (closed.length) {
