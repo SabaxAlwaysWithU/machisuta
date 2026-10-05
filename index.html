@@ -91,9 +91,10 @@
 
 // ---------- 定数 ----------
 const API = 'https://api.openpoiapi.com/v1/search';
-const FETCH_RADIUS = 500;      // m
+const FETCH_RADIUS = 300;      // m
 const FETCH_LIMIT = 200;
-const REFETCH_DIST = 150;      // m 前回取得地点からこれ以上動いたら再取得
+const REFETCH_DIST = 100;      // m 前回取得地点からこれ以上動いたら再取得
+const MAX_SPLIT_DEPTH = 2;     // 200件に達した範囲を4分割して取り直す回数(最大 1+4+16=21 リクエスト)
 const STORE_KEY = 'machisuta.v1';
 const DEFAULT_POS = { lat: 35.681236, lng: 139.767052 }; // 東京駅(位置不明時の仮位置)
 const REACH_OPTIONS = [30, 50, 100];
@@ -159,7 +160,7 @@ let lastFetch = null;      // { lat, lng }
 let fetching = false;
 
 // ---------- 地図 ----------
-const map = L.map('map', { zoomControl: false }).setView([DEFAULT_POS.lat, DEFAULT_POS.lng], 17);
+const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([DEFAULT_POS.lat, DEFAULT_POS.lng], 17);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 const poiLayer = L.layerGroup().addTo(map);
 const meMarker = L.circleMarker([0, 0], { radius: 8, color: '#fff', weight: 3, fillColor: '#1c7ed6', fillOpacity: 1 });
@@ -175,19 +176,32 @@ if (debugPos) {
 }
 
 // ---------- 施設取得 ----------
+// 1回の上限(200件)に達した範囲は4分割して取り直し、飲食店の取りこぼしを減らす
+async function fetchBox(box, depth, ctx) {
+  const res = await fetch(`${API}?bbox=${box.join(',')}&limit=${FETCH_LIMIT}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const rs = (await res.json()).results || [];
+  if (rs.length < FETCH_LIMIT) return rs;
+  if (depth >= MAX_SPLIT_DEPTH) { ctx.truncated = true; return rs; }
+  const [x0, y0, x1, y1] = box, xm = (x0 + x1) / 2, ym = (y0 + y1) / 2;
+  const parts = await Promise.all([[x0, y0, xm, ym], [xm, y0, x1, ym], [x0, ym, xm, y1], [xm, ym, x1, y1]]
+    .map((b) => fetchBox(b, depth + 1, ctx)));
+  return parts.flat();
+}
 async function fetchPois(center) {
   if (fetching) return;
   fetching = true;
   try {
-    const url = `${API}?center=${center.lng},${center.lat}&radius=${FETCH_RADIUS}&limit=${FETCH_LIMIT}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const dLat = FETCH_RADIUS / 111320;
+    const dLng = FETCH_RADIUS / (111320 * Math.cos(center.lat * Math.PI / 180));
+    const ctx = { truncated: false };
+    const results = await fetchBox([center.lng - dLng, center.lat - dLat, center.lng + dLng, center.lat + dLat], 0, ctx);
     const next = new Map();
-    for (const r of data.results || []) {
+    for (const r of results) {
       const lat = typeof r.lat === 'number' ? r.lat : parseFloat(r.lat);
       const lng = typeof r.lng === 'number' ? r.lng : parseFloat(r.lng);
       if (!r.name || !Number.isFinite(lat) || !Number.isFinite(lng)) continue; // 座標なしは除外
+      if (distM(center, { lat, lng }) > FETCH_RADIUS) continue; // bbox の四隅は円の外
       const key = keyOf(r.name, lat, lng);
       if (next.has(key)) continue;
       next.set(key, {
@@ -199,7 +213,7 @@ async function fetchPois(center) {
     lastFetch = { lat: center.lat, lng: center.lng };
     rebuildMarkers();
     refresh();
-    if (data.count >= FETCH_LIMIT) toast('件数が多いため、近い順に200件を表示しています');
+    if (ctx.truncated) toast('施設が密集しているため、一部を取得しきれていません');
   } catch (e) {
     toast('施設の取得に失敗しました。通信状況を確認してください');
     $('status').textContent = '施設を取得できませんでした';
